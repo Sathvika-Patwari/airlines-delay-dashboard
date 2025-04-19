@@ -3,34 +3,30 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 
-# Page config
+# --- Page config ---
 st.set_page_config(page_title="US Airline Delays", layout="wide")
 
-# Title
-st.title("US Airline Delays Dashboard")
+# --- Title ---
+st.title("✈️ US Airline Delays Dashboard")
 
-# Load & cache data
+# --- Load & cache data ---
 @st.cache_data
 def load_data():
-    delay_df = pd.read_csv("Airline_Delay_Cause.csv")
-    airports_df = pd.read_csv("airports.csv")
-    merged_df = delay_df.merge(airports_df, left_on='airport', right_on='IATA')
-    merged_df['Total_Delay'] = merged_df[[
-        'carrier_delay', 'weather_delay', 'nas_delay', 'security_delay', 'late_aircraft_delay']].sum(axis=1)
-    merged_df['month_name'] = pd.to_datetime(merged_df['month'], format='%m').dt.strftime('%b')
-    return merged_df
+    df = pd.read_csv("merged_airline_airport_data.csv")
+    return df
 
-merged_df = load_data()
+df = load_data()
 
-# Sidebar Filters
+# --- Sidebar Filters ---
 st.sidebar.header("Filters")
 
-unique_years = sorted(merged_df['year'].unique())
-selected_years = st.sidebar.multiselect("Select Year Range", unique_years, default=unique_years)
+unique_years = sorted(df['year'].unique())
+selected_years = st.sidebar.multiselect("Select Year(s)", unique_years, default=unique_years)
 
-month_map = {i: pd.to_datetime(str(i), format='%m').strftime('%b') for i in range(1, 13)}
-unique_months = list(month_map.values())
-selected_months = st.sidebar.multiselect("Select Month Range", unique_months, default=unique_months)
+# Month filter clean (Jan - Dec)
+month_order = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
+               'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+selected_months = st.sidebar.multiselect("Select Month(s)", month_order, default=month_order)
 
 delay_type_options = {
     'Carrier Delay': 'carrier_delay',
@@ -48,30 +44,24 @@ if "Total Delay" in selected_delay_types and len(selected_delay_types) > 1:
 
 selected_delay_columns = [delay_type_options[dt] for dt in selected_delay_types]
 
-unique_hours = sorted(merged_df['hour'].dropna().unique()) if 'hour' in merged_df.columns else []
-selected_hours = st.sidebar.multiselect("Select Hour Range", unique_hours, default=unique_hours) if unique_hours else []
-
-all_airlines = merged_df['carrier_name'].unique().tolist()
+all_airlines = df['carrier_name'].unique().tolist()
 selected_airlines = st.sidebar.multiselect("Select Airlines", all_airlines, default=all_airlines)
 
-all_airports = merged_df['airport_name'].unique().tolist()
+all_airports = df['airport_name'].unique().tolist()
 selected_airports = st.sidebar.multiselect("Select Airports", all_airports, default=all_airports)
 
-# Apply Filters
-filtered_df = merged_df[
-    (merged_df['year'].isin(selected_years)) &
-    (merged_df['month_name'].isin(selected_months)) &
-    (merged_df['carrier_name'].isin(selected_airlines)) &
-    (merged_df['airport_name'].isin(selected_airports))
+# --- Apply Filters ---
+filtered_df = df[
+    (df['year'].isin(selected_years)) &
+    (df['month'].map(lambda x: pd.to_datetime(str(x), format='%m').strftime('%b')).isin(selected_months)) &
+    (df['carrier_name'].isin(selected_airlines)) &
+    (df['airport_name'].isin(selected_airports))
 ]
-
-if selected_hours:
-    filtered_df = filtered_df[filtered_df['hour'].isin(selected_hours)]
 
 filtered_df['Selected_Delay'] = filtered_df[selected_delay_columns].sum(axis=1)
 
-# KPI Cards
-st.subheader("Key Metrics (Based on Filters)")
+# --- KPI Cards ---
+st.subheader("📊 Key Metrics (Based on Filters)")
 col1, col2, col3, col4, col5 = st.columns(5)
 
 total_flights = filtered_df['arr_flights'].sum()
@@ -79,13 +69,13 @@ total_delays = filtered_df['arr_del15'].sum()
 delay_percentage = (total_delays / total_flights) * 100 if total_flights > 0 else 0
 
 col1.metric("Total Flights", int(total_flights))
-col2.metric("Total Delays", int(total_delays))
+col2.metric("Total Delayed Flights", int(total_delays))
 col3.metric("Delay %", f"{delay_percentage:.2f}%")
-col4.metric("Total Delay Time (min)", int(filtered_df['Selected_Delay'].sum()))
+col4.metric("Total Delay Time (minutes)", int(filtered_df['Selected_Delay'].sum()))
 col5.metric("Total Cancellations", int(filtered_df['arr_cancelled'].sum()))
 
-# Delay Breakdown Visualizations
-st.subheader("Delay Breakdown Visualizations")
+# --- Delay Breakdown Visualizations ---
+st.subheader("🔎 Delay Cause Breakdown")
 col5, col6 = st.columns(2)
 
 with col5:
@@ -104,28 +94,45 @@ with col6:
     fig_bar = px.bar(delay_duration, x='Reason', y='Total Delay (min)', color='Reason', title='Delay Duration by Cause')
     st.plotly_chart(fig_bar, use_container_width=True)
 
-# Monthly Trend Line Chart
-if len(filtered_df['month_name'].unique()) > 1:
-    st.subheader("📈 Monthly Delay Trend")
+# --- Monthly Trend Line Chart ---
+if not filtered_df.empty:
+    st.subheader(f"📈 Monthly Delay Trend (Selected Years) {', '.join(selected_delay_types)}" )
+
     trend_df = filtered_df.groupby(['year', 'month']).agg({'Selected_Delay': 'sum'}).reset_index()
     trend_df['month_name'] = pd.to_datetime(trend_df['month'], format='%m').dt.strftime('%b')
-    month_order = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+    # Enforce fixed Jan-Dec order
+    month_order = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                   'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
     trend_df['month_name'] = pd.Categorical(trend_df['month_name'], categories=month_order, ordered=True)
-    trend_df = trend_df.sort_values(['year', 'month'])
-    fig_trend = px.line(trend_df, x='month', y='Selected_Delay', markers=True, color='year', title='Monthly Delay Trend by Year')
-    fig_trend.update_layout(
-        xaxis = dict(
-            tickmode = 'array',
-            tickvals = list(range(1,13)),
-            ticktext = month_order
-        )
+
+    # Fix missing months problem: reindex month_name properly
+    fig_line = px.line(
+        trend_df,
+        x='month_name',
+        y='Selected_Delay',
+        color='year',
+        markers=True,
+        title="Monthly Delay Trend for Selected Years"
     )
-    st.plotly_chart(fig_trend, use_container_width=True)
 
+    fig_line.update_layout(
+        xaxis=dict(
+            categoryorder='array',
+            categoryarray=month_order
+        ),
+        xaxis_title="Month",
+        yaxis_title="Total Delay (minutes)",
+        legend_title="Year",
+        hovermode="x unified"
+    )
 
-
-# Airport-Wise Stats + Delay Rate
-st.subheader("Airport-wise Delay Metrics")
+    st.plotly_chart(fig_line, use_container_width=True)
+else:
+    st.info("No data available for selected filters.")
+# --- Airport-Wise Stats + Delay Rate ---
+st.subheader(f"🏢 Airport-wise Delay Metrics {', '.join(selected_delay_types)}")
 col7, col8 = st.columns(2)
 
 with col7:
@@ -145,8 +152,8 @@ with col8:
                       title='Top 10 Airports by Delay Rate', color='delay_rate')
     st.plotly_chart(fig_rate, use_container_width=True)
 
-# Geospatial Delay Map
-st.subheader(f"Airport Delay Intensity by {', '.join(selected_delay_types)}")
+# --- Geospatial Delay Map ---
+st.subheader(f"🗺️ Airport Delay Intensity by {', '.join(selected_delay_types)}")
 
 geo_df = filtered_df.dropna(subset=selected_delay_columns)
 geo_df = geo_df[geo_df['Selected_Delay'] > 0]
@@ -165,12 +172,7 @@ if not geo_df.empty:
             'LONGITUDE': False
         }
     else:
-        hover_data = {
-            'airport_name': True,
-            'carrier_name': True,
-            'LATITUDE': False,
-            'LONGITUDE': False
-        }
+        hover_data = {'airport_name': True, 'carrier_name': True, 'LATITUDE': False, 'LONGITUDE': False}
         for selected_type in selected_delay_types:
             hover_data[delay_type_options[selected_type]] = True
 
@@ -191,9 +193,8 @@ if not geo_df.empty:
 else:
     st.warning("No data available for the selected filters and delay type.")
 
-# Raw Data Table
-with st.expander("View Filtered Raw Data"):
+# --- Raw Data Table ---
+with st.expander("📃 View Filtered Raw Data"):
     st.dataframe(filtered_df.head(100), use_container_width=True)
-
     csv = filtered_df.to_csv(index=False).encode('utf-8')
     st.download_button("Download Filtered Data", csv, "filtered_airline_delay_data.csv", "text/csv")
